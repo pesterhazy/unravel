@@ -121,8 +121,8 @@ interpreted by the REPL client. The following specials are available:
 - `#__`: expand the most recent lazy seq ellipsis ")
   (println))
 
-(defn read-payload []
-  (lumo.io/slurp (un/join-path (or js/process.env.UNRAVEL_HOME ".") "resources" "unrepl" "blob.clj")))
+(defn default-blob-fname []
+  (un/join-path (or js/process.env.UNRAVEL_HOME ".") "resources" "unrepl" "blob.clj"))
 
 (defn special [{:keys [conn-out rl] :as ctx} cmd]
   (cond
@@ -136,7 +136,7 @@ interpreted by the REPL client. The following specials are available:
       (send-command ctx (str cmd))
       (.prompt rl))))
 
-(defn connect [conn host port full? terminating?]
+(defn connect [conn host port full? terminating? blob]
   (-> (doto conn
         (.connect port
                   host
@@ -145,7 +145,10 @@ interpreted by the REPL client. The following specials are available:
                       (.setNoDelay conn true)
                       (ud/dbug :connect full?)
                       (.write conn (if full?
-                                     (str (read-payload) "\n" start-cmd "\n")
+                                     (str (lumo.io/slurp (or blob (default-blob-fname)))
+                                          "\n"
+                                          start-cmd
+                                          "\n")
                                      start-cmd))
                       (.write conn "\n"))))
         (.on "error" (fn [err]
@@ -168,6 +171,12 @@ interpreted by the REPL client. The following specials are available:
 
 (defn cut [s n]
   (or (some-> (some->> s (re-matches #"^(.{67})(.{3}).*$") second) (str "...")) s))
+
+(defn to-string [v]
+  (cond
+    (string? v) v
+    (.-form v) (-> v .-form first)
+    :else (str v)))
 
 (defn show-doc [{:keys [rl ostream state] :as ctx} full?]
   (when-let [word (ul/find-word-at (.-line rl) (max 0 (dec (.-cursor rl))))]
@@ -193,7 +202,7 @@ interpreted by the REPL client. The following specials are available:
                          (let [[result more] r]
                            (when result
                              (let [pos (._getCursorPos rl)
-                                   lines (clojure.string/split-lines (cond-> (clojure.string/trimr result)
+                                   lines (clojure.string/split-lines (cond-> (clojure.string/trimr (to-string result))
                                                                        more
                                                                        (str "...")))]
                                (println)
@@ -245,17 +254,17 @@ interpreted by the REPL client. The following specials are available:
                        (set-prompt ctx nil warn?)
                        (.prompt rl true)))))))
 
-(defn start [host port]
+(defn start [host port {:keys [blob]}]
   (let [istream js/process.stdin
         ostream js/process.stdout
         terminating? (atom false)
         conn-out (.Socket. un/net)
-        conn-in (connect conn-out host port true terminating?)]
+        conn-in (connect conn-out host port true terminating? blob)]
     (.on conn-in
          "started"
          (fn []
            (let [aux-out (.Socket. un/net)
-                 aux-in (connect aux-out host port true terminating?)
+                 aux-in (connect aux-out host port true terminating? blob)
                  completer-fn (atom nil)]
              (ud/dbug :main-connection-ready)
              (.on aux-in
