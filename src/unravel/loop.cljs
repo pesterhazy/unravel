@@ -356,7 +356,7 @@ interpreted by the REPL client. The following specials are available:
       (case s
         "\r" (let [n (-> edit-state .-stack .-length)]
                (doto rl
-                 (._insertString s)
+                 (._insertString "\n")
                  (cond-> (pos? n) (._insertString (str/join (repeat n "  "))))))
         ("(" "[" "{" "\"") (let [pair (case s "(" "()" "[" "[]" "{" "{}" "\"" "\"\"")] 
                             (doto rl
