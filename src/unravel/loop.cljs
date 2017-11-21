@@ -354,10 +354,11 @@ interpreted by the REPL client. The following specials are available:
     (case (.-mode edit-state)
       :normal
       (case s
-        "\r" (let [n (-> edit-state .-stack .-length)]
-               (doto rl
-                 (._insertString "\n")
-                 (cond-> (pos? n) (._insertString (str/join (repeat n "  "))))))
+        "\r" (when-not (re-matches #"\s*" (subs (.-line rl) (.-cursor rl)))
+               (let [n (-> edit-state .-stack .-length)]
+                (doto rl
+                  (._insertString "\n")
+                  (cond-> (pos? n) (._insertString (str/join (repeat n "  ")))))))
         ("(" "[" "{" "\"") (let [pair (case s "(" "()" "[" "[]" "{" "{}" "\"" "\"\"")] 
                             (doto rl
                               (._insertString pair)
@@ -389,7 +390,7 @@ interpreted by the REPL client. The following specials are available:
     (specify! rl
       Object
       (_line [this]
-        (if (and (= (.-cursor this) (-> this .-line .-length)) (guess-readable? (.-line this)))
+        (if (and (re-matches #"\s*" (subs (.-line this) (.-cursor this))) (guess-readable? (.-line this)))
           (send-input!)
           (._insertString this "\n")))
       (_ttyWrite [this s key]
