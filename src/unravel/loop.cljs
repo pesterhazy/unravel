@@ -232,7 +232,7 @@ interpreted by the REPL client. The following specials are available:
         (.clearLine rl))
       (.prompt rl false))))
 
-(defn- guess-readable? [line]
+(defn- guess-edit-state [line]
   (let [state #js {:stack #js [] :mode :normal}]
     (reduce
       (fn [_ ch]
@@ -263,6 +263,10 @@ interpreted by the REPL client. The following specials are available:
             (\newline \return) (set! (.-mode state) :normal)
             nil)))
       nil line)
+    state))
+
+(defn- guess-readable? [line]
+  (let [state (guess-edit-state line)]
     (and (#{:comment :normal} (.-mode state)) (zero? (-> state .-stack .-length)))))
 
 (defn check-readable [{:keys [rl state ostream] :as ctx}]
@@ -343,7 +347,38 @@ interpreted by the REPL client. The following specials are available:
           curr-line (str start-curr-line end-curr-line)]
       (._moveCursor rl (inc (min (+ (count end-curr-line) (count next-line)) (count curr-line)))))))
 
-(defmethod process[:readline :ready]
+(defn- parfix
+  "Returns falsy when it doesn't handle the edit."
+  [rl pre post s]
+  (let [edit-state (guess-edit-state pre)]
+    (case (.-mode edit-state)
+      :normal
+      (case s
+        "\r" (let [n (-> edit-state .-stack .-length)]
+               (doto rl
+                 (._insertString s)
+                 (cond-> (pos? n) (._insertString (str/join (repeat n "  "))))))
+        ("(" "[" "{" "\"") (let [pair (case s "(" "()" "[" "[]" "{" "{}" "\"" "\"\"")] 
+                            (doto rl
+                              (._insertString pair)
+                              (._moveCursor -1)))
+        (")" "]" "}") (when-some [[_ del] (re-find (re-pattern (str "^(\\s+)?\\" s)) post)]
+                        (doto rl
+                          (cond-> del
+                            (doto 
+                              (-> .-line (set! (str pre (subs post (count del)))))
+                              ._refreshLine))
+                          (._moveCursor 1)))
+        nil)
+      :string
+      (case s
+        "\"" (when (= \" (aget post 0))
+               (doto rl (._moveCursor 1)))
+        nil)
+      
+      nil)))
+
+(defmethod process [:readline :ready]
   [[_ rl] _ {:keys [sm connect] :as ctx}]
   (let [ctx (assoc ctx :rl rl :completer-fn complete)
         send-input! (-> rl .-_line (.bind rl))
@@ -359,6 +394,10 @@ interpreted by the REPL client. The following specials are available:
           (._insertString this "\n")))
       (_ttyWrite [this s key]
         (cond
+          (and s (not (or (.-ctrl keys) (.-meta keys))))
+          (or (parfix rl (subs (.-line rl) 0 (.-cursor rl)) (subs (.-line rl) (.-cursor rl)) s)
+            (.call super-_ttyWrite this s key))
+          
           (.-ctrl key)
           (case (.-name key)
             "up" (._historyPrev this)
@@ -407,16 +446,15 @@ interpreted by the REPL client. The following specials are available:
   [[_ [chunk key]] _ ctx]
   (cond
     (and (.-ctrl key) (= "o" (.-name key)))
-    (show-doc ctx true)
+    (doto ctx (show-doc true))
 
     (and (.-ctrl key) (= "r" (.-name key))) ; r like run
-    ((:send-input! ctx))
+    (do ((:send-input! ctx)) ctx)
     
     :else
-    (do
-      (check-readable ctx)
-      (show-doc ctx false)))
-    ctx)
+    (doto ctx
+      check-readable
+      (show-doc false))))
 
 (defmethod process [:readline :close]
   [_ _ ctx]
