@@ -359,10 +359,10 @@ interpreted by the REPL client. The following specials are available:
                 (doto rl
                   (._insertString "\n")
                   (cond-> (pos? n) (._insertString (str/join (repeat n "  ")))))))
-        ("(" "[" "{" "\"") (let [pair (case s "(" "()" "[" "[]" "{" "{}" "\"" "\"\"")] 
-                            (doto rl
-                              (._insertString pair)
-                              (._moveCursor -1)))
+        ("(" "[" "{" "\"" ";") (let [pair (case s "(" "()" "[" "[]" "{" "{}" "\"" "\"\"" ";" ";\n")] 
+                                (doto rl
+                                  (._insertString pair)
+                                  (._moveCursor -1)))
         (")" "]" "}") (when-some [[_ del] (re-find (re-pattern (str "^(\\s+)?\\" s)) post)]
                         (doto rl
                           (cond-> del
@@ -371,10 +371,21 @@ interpreted by the REPL client. The following specials are available:
                               ._refreshLine))
                           (._moveCursor 1)))
         nil)
+      
       :string
       (case s
-        "\"" (when (= \" (aget post 0))
-               (doto rl (._moveCursor 1)))
+        "\"" (if (= \" (aget post 0))
+               (doto rl (._moveCursor 1))
+               (doto rl (._insertString "\"  \"") (._moveCursor -2))) ; split
+        nil)
+      
+      :comment
+      (case s
+        "\r" (let [trail (re-find #"^[^\n\r]*" post)]
+               (when-not (re-matches #"\s*" trail)
+                 (let [indent (count (second (re-find #"([^\n\r;]*);[^\n\r]*$" pre)))]
+                   (doto rl (._insertString (str "\n" (apply str (repeat indent " ")) "; "))))))
+        
         nil)
       
       nil)))
