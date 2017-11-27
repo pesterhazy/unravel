@@ -48,8 +48,16 @@
     (some-> rl (.prompt true)))
   ctx)
 
+(defn- terminate! [ctx]
+  (reset! (:terminating? ctx) true)
+  (some-> ctx :conn-out .end)
+  (some-> ctx :aux-out .end)
+  (some-> ctx :loader-out .destroy)) ; plain .end hangs
+
 (defmethod process [:conn :eval] [[_ result counter] _ ctx]
-  (ut/cyan #(prn result))
+  (if (and (some? (:trigger ctx)) (= (:trigger ctx) result))
+    (terminate! ctx)
+    (ut/cyan #(prn result)))
   (assoc ctx :pending-eval nil))
 
 (defmethod process [:conn :started-eval] [[_ {:keys [actions]}] _ ctx]
@@ -70,6 +78,10 @@
   (.write js/process.stdout s)
   ctx)
 
+(defmethod process [:conn :err] [[_ s] _ {:keys [rl] :as ctx}]
+  (ut/yellow #(.write js/process.stdout s))
+  ctx)
+
 (defmethod process :default [command _ ctx]
   (ud/dbug :unknown-command command)
   ctx)
@@ -77,25 +89,30 @@
 ;; use qualified symbols in case code is invoked
 ;; after calling (in-ns 'invalid-ns)
 
-(defn cmd-complete [prefix]
-  (list 'clojure.core/let ['prefix prefix]
-        '(clojure.core/let [all (clojure.core/all-ns)
-                            [_ ns va] (clojure.core/re-matches #"^(.*)/(.*)$" prefix)
-                            vars (clojure.core/->> (if ns
-                                                     (clojure.core/some->> ns
-                                                                           clojure.core/symbol
-                                                                           clojure.core/find-ns
-                                                                           clojure.core/ns-publics)
-                                                     (clojure.core/ns-map clojure.core/*ns*))
-                                                   clojure.core/keys)
-                            nss (clojure.core/when-not ns
-                                  (clojure.core/->> (clojure.core/all-ns)
-                                                    (clojure.core/map clojure.core/ns-name)))]
-           (clojure.core/->> (clojure.core/concat vars nss)
-                             (clojure.core/filter #(clojure.core/-> %
-                                                                    clojure.core/str
-                                                                    (.startsWith (clojure.core/or va prefix))))
-                             clojure.core/sort))))
+(defn cmd-complete [{{{:keys [compliment]} :flags} :options} prefix]
+  (if compliment
+    (list '->>
+          prefix
+          'compliment.core/completions
+          '(clojure.core/map :candidate))
+    (list 'clojure.core/let ['prefix prefix]
+          '(clojure.core/let [all (clojure.core/all-ns)
+                              [_ ns va] (clojure.core/re-matches #"^(.*)/(.*)$" prefix)
+                              vars (clojure.core/->> (if ns
+                                                       (clojure.core/some->> ns
+                                                                             clojure.core/symbol
+                                                                             clojure.core/find-ns
+                                                                             clojure.core/ns-publics)
+                                                       (clojure.core/ns-map clojure.core/*ns*))
+                                                     clojure.core/keys)
+                              nss (clojure.core/when-not ns
+                                    (clojure.core/->> (clojure.core/all-ns)
+                                                      (clojure.core/map clojure.core/ns-name)))]
+             (clojure.core/->> (clojure.core/concat vars nss)
+                               (clojure.core/filter #(clojure.core/-> %
+                                                                      clojure.core/str
+                                                                      (.startsWith (clojure.core/or va prefix))))
+                               clojure.core/sort)))))
 
 (defn cmd-doc [word]
   (str "(do (require 'clojure.repl)(clojure.repl/doc " word "))"))
@@ -142,23 +159,26 @@ interpreted by the REPL client. The following specials are available:
   "Returns a function from blob (as string) and terminating? (an boolean atom)
    to streams pairs (as a map with keys :chars-out and :edn-in)."
   [host port]
-  (fn connect [blob terminating?]
-    (let [conn (.Socket. un/net)]
-      {:chars-out conn
-       :edn-in (-> (doto conn
-                     (.connect port
-                       host
-                       (fn []
-                         (when-not @terminating?
-                           (.setNoDelay conn true)
-                           (ud/dbug :connect (count blob))
-                           (.write conn blob)
-                           (.write conn "\n"))))
-                     (.on "error" (fn [err]
-                                    (println "Socket error:" (pr-str err))
-                                    (js/process.exit 1))))
-                 (.pipe (uw/make-skip "[:unrepl/hello"))
-                 (.pipe (uw/make-edn-stream)))})))
+  (fn connect
+    ([blob terminating?]
+      (connect blob terminating? "[:unrepl/hello"))
+    ([blob terminating? sync-string]
+      (let [conn (.Socket. un/net)]
+        {:chars-out conn
+         :edn-in (-> (doto conn
+                       (.connect port
+                         host
+                         (fn []
+                           (when-not @terminating?
+                             (.setNoDelay conn true)
+                             (ud/dbug :connect (count blob))
+                             (.write conn blob)
+                             (.write conn "\n"))))
+                       (.on "error" (fn [err]
+                                      (println "Socket error:" (pr-str err))
+                                      (js/process.exit 1))))
+                   (.pipe (uw/make-skip sync-string))
+                   (.pipe (uw/make-edn-stream)))}))))
 
 (defn call-remote [{:keys [rl callbacks] :as ctx} form cb]
   (let [eval-id (str (gensym))
@@ -199,7 +219,7 @@ interpreted by the REPL client. The following specials are available:
                          (let [[result more] r]
                            (when result
                              (let [pos (._getCursorPos rl)
-                                   lines (clojure.string/split-lines (cond-> (clojure.string/trimr result)
+                                   lines (str/split-lines (cond-> (str/trimr result)
                                                                        more
                                                                        (str "...")))]
                                (println)
@@ -218,7 +238,7 @@ interpreted by the REPL client. The following specials are available:
                   (cb nil #js[#js[] word]))
         [cb* timeout*] (uu/once-many cb timeout)]
     (call-remote ctx
-                 (cmd-complete word)
+                 (cmd-complete ctx word)
                  (fn [completions]
                    (cb* nil (clj->js [(map str completions) word]))
                    (show-doc ctx false)))))
@@ -228,9 +248,11 @@ interpreted by the REPL client. The following specials are available:
     (some->> pending-eval :action :interrupt pr-str (send-aux-command ctx))
     (do
       (println)
+      (ut/yellow #(println "^C interrupts current evaluation; use ^D to exit."))
       (when (ut/rich?)
         (.clearLine rl))
-      (.prompt rl false))))
+      (.prompt rl false)))
+  ctx)
 
 (defn- guess-edit-state [line]
   (let [state #js {:stack #js [] :mode :normal}]
@@ -296,13 +318,49 @@ interpreted by the REPL client. The following specials are available:
     sm))
 
 (defmethod process [:conn :unrepl/hello]
-  [[_ {:as session-info {:keys [start-aux :unrepl.jvm/start-side-loader]} :actions}] _ {:keys [sm connect banner] :as ctx}]
-  (let [{aux-in :edn-in aux-out :chars-out} (connect (pr-str start-aux) (:terminating? ctx))
-        #_#_{loader-in :edn-in aux-out :loader-out} (connect (pr-str start-side-loader) (:terminating? ctx))]
+  [[_ {:as session-info {:keys [start-aux :unrepl.jvm/start-side-loader]} :actions}] _ {:keys [sm connect banner] {:keys [cp]} :options :as ctx}]
+  (let [{aux-in :edn-in aux-out :chars-out} (connect (pr-str start-aux) (:terminating? ctx))]
     (ud/dbug :main-connection-ready)
     (when (ut/interactive?) (banner))
     (.on aux-in "data" (fn [msg] (sm :aux msg)))
-    (into ctx {:session-info session-info :aux-in aux-in :aux-out aux-out})))
+    (cond-> (into ctx {:session-info session-info :aux-in aux-in :aux-out aux-out})
+      (seq cp)
+      (assoc :loader-out
+        (let [{loader-in :edn-in loader-out :chars-out} (connect (pr-str start-side-loader) (:terminating? ctx) "[:unrepl.jvm.side-loader/hello")]
+          (.on loader-in "data"
+            (fn [[tag payload :as msg]]
+              (case tag
+                (:class :resource)
+                (let [resource (str (if (= :class tag) (str (str/replace payload "." "/") ".class") payload))
+                      file (str/replace resource "/" (.-sep un/path))
+                      lookup (fn lookup [cp]
+                               (if-some [[path & cp] (seq cp)]
+                                 (.stat un/fs path (fn [err stats]
+                                                     (cond
+                                                       err (lookup cp)
+                                                       
+                                                       ; directory entry on the classpath
+                                                       (.isDirectory stats)
+                                                       (.readFile un/fs (un/join-path path file)
+                                                         (fn [err bytes]
+                                                           (if err
+                                                             (lookup cp)
+                                                             (.write loader-out (prn-str (.toString bytes "base64"))))))
+                                                     
+                                                       :else ; assumes zip (jar) file
+                                                       (-> (.file un/open-jar path)
+                                                         (.then (fn [d]
+                                                                  (if-some [bytes (->> d .-files (some #(when (= file (.-path %))
+                                                                                                          (.buffer %))))]
+                                                                    (.then bytes (fn [bytes]
+                                                                                   (.write loader-out (prn-str (.toString bytes "base64")))))
+                                                                    (lookup cp))))))))
+                                 (.write loader-out "nil\n")))]
+                  (if (re-find #"^/|(/|^)\.\.(/|$)|\\" resource) ; say no to injection!
+                    (.write loader-out "nil\n")
+                    (lookup cp)))
+                (ud/dbug :sideloader-ignoring msg))))
+          loader-out)))))
 
 (defn invoke [template params]
   (pr-str
@@ -338,14 +396,20 @@ interpreted by the REPL client. The following specials are available:
   (interrupt ctx))
 
 (defn- line-up [rl]
-  (when-some [[_ prev-line curr-line] (re-find #"([^\r\n]*)(?:\r\n|\r|\n)([^\r\n]*)$" (subs (.-line rl) 0 (.-cursor rl)))]
-    (._moveCursor rl (- (inc (max (count prev-line) (count curr-line)))))))
+  (if-some [[_ prev-line curr-line] (re-find #"([^\r\n]*)(?:\r\n|\r|\n)([^\r\n]*)$" (subs (.-line rl) 0 (.-cursor rl)))]
+    (._moveCursor rl (- (inc (max (count prev-line) (count curr-line)))))
+    (doto rl
+      ._historyPrev
+      (._moveCursor js/Infinity))))
 
 (defn- line-down [rl]
-  (when-some [[_ end-curr-line next-line] (re-find #"^([^\r\n]*)(?:\r\n|\r|\n)([^\r\n]*)" (subs (.-line rl) (.-cursor rl)))]
+  (if-some [[_ end-curr-line next-line] (re-find #"^([^\r\n]*)(?:\r\n|\r|\n)([^\r\n]*)" (subs (.-line rl) (.-cursor rl)))]
     (let [start-curr-line (re-find #"[^\r\n]*$" (subs (.-line rl) 0 (.-cursor rl)))
           curr-line (str start-curr-line end-curr-line)]
-      (._moveCursor rl (inc (min (+ (count end-curr-line) (count next-line)) (count curr-line)))))))
+      (._moveCursor rl (inc (min (+ (count end-curr-line) (count next-line)) (count curr-line)))))
+    (doto rl
+      ._historyNext
+      (._moveCursor js/-Infinity))))
 
 (defn- parfix
   "Returns falsy when it doesn't handle the edit."
@@ -393,6 +457,7 @@ interpreted by the REPL client. The following specials are available:
 (defmethod process [:readline :ready]
   [[_ rl] _ {:keys [sm connect] :as ctx}]
   (let [ctx (assoc ctx :rl rl :completer-fn complete)
+        parfix-enabled (-> ctx :options :flags (contains? :parfix))
         send-input! (-> rl .-_line (.bind rl))
         super-_ttyWrite (.-_ttyWrite rl)
         super-_addHistory (.-_addHistory rl)
@@ -405,20 +470,14 @@ interpreted by the REPL client. The following specials are available:
           (send-input!)
           (._insertString this "\n")))
       (_ttyWrite [this s key]
-        (cond
-          (and s (not (or (.-ctrl keys) (.-meta keys))))
-          (or (parfix rl (subs (.-line rl) 0 (.-cursor rl)) (subs (.-line rl) (.-cursor rl)) s)
-            (.call super-_ttyWrite this s key))
-          
-          (.-ctrl key)
-          (case (.-name key)
-            "up" (._historyPrev this)
-            "down" (._historyNext this)
-            (.call super-_ttyWrite this s key))
-          :else
-          (case (.-name key)
-            "up" (line-up this)
-            "down" (line-down this) 
+        (or (and parfix-enabled
+              (parfix rl (subs (.-line rl) 0 (.-cursor rl)) (subs (.-line rl) (.-cursor rl)) s))
+          (if
+            (not (or (.-ctrl key) (.-meta key) (.-shift key)))
+            (case (.-name key)
+              "up" (line-up this)
+              "down" (line-down this) 
+              (.call super-_ttyWrite this s key))
             (.call super-_ttyWrite this s key))))
       (_addHistory [this]
         (let [line (.-line this)]
@@ -454,34 +513,49 @@ interpreted by the REPL client. The following specials are available:
     (send-command ctx line))
   ctx)
 
+(defn- current-time-micros []
+  (let [[secs nanos] (.hrtime js/process)]
+    (+ (* secs 1e6) (* nanos 1e-3))))
+
 (defmethod process [:readline :keypress]
   [[_ [chunk key]] _ ctx]
-  (cond
-    (and (.-ctrl key) (= "o" (.-name key)))
-    (doto ctx (show-doc true))
-
-    (and (.-ctrl key) (= "r" (.-name key))) ; r like run
-    (do ((:send-input! ctx)) ctx)
+  (let [now (current-time-micros)
+        is-pasting (< (- now (:last-keypress ctx)) 10000)]
+    (cond
+      (and (.-ctrl key) (= "o" (.-name key)))
+      (show-doc ctx true)
+      
+      (and (.-ctrl key) (= "j" (.-name key))) ; j like jog (run)
+      ((:send-input! ctx))
     
-    :else
-    (doto ctx
-      check-readable
-      (show-doc false))))
+      :else
+      (when-not is-pasting
+        (doto ctx
+          check-readable
+          (show-doc false))))
+    (assoc ctx :last-keypress now)))
 
 (defmethod process [:readline :close]
   [_ _ ctx]
   (when (ut/rich?)
     (println))
-  (reset! (:terminating? ctx) true)
-  (ud/dbug :end "conn-out")
-  (some-> ctx :conn-out .end)
-  (some-> ctx :aux-out .end)
-  ctx)
+  (if (ut/interactive?)
+    (doto ctx terminate!)
+    ; in non-interactive mode we don't want to close until everyhing has been processed
+    (let [trigger (keyword "unravel.loop" (gensym "I'm-done!__"))]
+      (.emit (:rl ctx) "line" (str trigger))
+      (assoc ctx :trigger trigger))))
 
-(defn start [host port]
+(defn default-blob-fname []
+  (un/join-path (or js/process.env.UNRAVEL_HOME ".") "resources" "unrepl" "blob.clj"))
+
+(defn start [host port {:keys [blobs] :as options}]
   (let [connect (socket-connector host port)
         terminating? (atom false)
-        {conn-in :edn-in conn-out :chars-out} (connect (read-payload) terminating?)
+        payload (->> (or blobs [(default-blob-fname)])
+                     (map lumo.io/slurp)
+                     (clojure.string/join "\n"))
+        {conn-in :edn-in conn-out :chars-out} (connect payload terminating?)
         sm
         (state-machine {:istream js/process.stdin
                         :ostream js/process.stdout
@@ -492,7 +566,9 @@ interpreted by the REPL client. The following specials are available:
                         :pending-eval nil
                         :state (atom {})
                         :connect connect
-                        :banner #(banner host port)}
+                        :banner #(banner host port)
+                        :options options
+                        :last-keypress (current-time-micros)}
           (fn [ctx origin msg]
             (ud/dbug :receive {:origin origin} msg)
             (process msg origin ctx)))]
