@@ -17,4 +17,5 @@ jobs:
           paths:
             - ~/.m2
           key: clojure
-      - run: node --version
+      - run: sudo apt-get update && sudo apt-get install -y nodejs
+      - run: nodejs --version
