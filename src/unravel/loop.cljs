@@ -257,39 +257,58 @@ interpreted by the REPL client. The following specials are available:
 (defn- guess-edit-state [line]
   (let [state #js {:stack #js [] :mode :normal}]
     (reduce
-      (fn [_ ch]
-        (case (.-mode state)
-          :normal
-          (case ch
-            "[" (-> state .-stack (.push "]"))
-            "(" (-> state .-stack (.push ")"))
-            "{" (-> state .-stack (.push "}"))
-            ("]" ")" "}")
-            (let [expected (-> state .-stack .pop)]
-              (when-not (= expected ch)
-                (-> state .-stack (.push expected))
-                (reduced nil)))
-           \\ (set! (.-mode state) :normal-esc)
-           \" (set! (.-mode state) :string)
-           \; (set! (.-mode state) :comment)
-           nil)
-          :string
-          (case ch
-            \" (set! (.-mode state) :normal)
-            \\ (set! (.-mode state) :string-esc)
-            nil)
-          :string-esc (set! (.-mode state) :string)
-          :normal-esc (set! (.-mode state) :normal)
-          :comment
-          (case ch
-            (\newline \return) (set! (.-mode state) :normal)
-            nil)))
-      nil line)
+      (fn [_ i]
+        (let [ch (nth line i)]
+          (case (.-mode state)
+            :normal
+            (case ch
+              "[" (-> state .-stack (.push "]"))
+              "(" (-> state .-stack (.push ")"))
+              "{" (-> state .-stack (.push "}"))
+              ("]" ")" "}")
+              (if-some [expected (-> state .-stack .pop)]
+                (when-not (= expected ch)
+                  (doto state
+                    (-> .-stack (.push expected))
+                    (-> .-mode (set! :error))
+                    (-> .-error (set! {:cause :unexpected-closing-delimiter
+                                       :expected expected
+                                       :pos i})))
+                  (reduced nil))
+                (do
+                  (doto state
+                    (-> .-mode (set! :error))
+                    (-> .-error (set! {:cause :unexpected-closing-delimiter
+                                       :pos i})))
+                  (reduced nil)))
+              \\ (set! (.-mode state) :normal-esc)
+              \" (set! (.-mode state) :string)
+              \; (set! (.-mode state) :comment)
+             nil)
+            :string
+            (case ch
+              \" (set! (.-mode state) :normal)
+              \\ (set! (.-mode state) :string-esc)
+              nil)
+            :string-esc (set! (.-mode state) :string)
+            :normal-esc (set! (.-mode state) :normal)
+            :comment
+           (case ch
+             (\newline \return) (set! (.-mode state) :normal)
+             nil))))
+      nil (range (count line)))
     state))
 
 (defn- guess-readable? [line]
   (let [state (guess-edit-state line)]
     (and (#{:comment :normal} (.-mode state)) (zero? (-> state .-stack .-length)))))
+
+(defn- find-closing-delimiter [line i]
+  (let [state (guess-edit-state (subs line i))]
+    (when (= :error (.-mode state))
+      (let [{:keys [pos cause expected]} (.-error state)]
+        (when (and (= cause :unexpected-closing-delimiter) (nil? expected))
+          (+ i pos))))))
 
 (defn check-readable [{:keys [rl state ostream] :as ctx}]
   (let [warn? (not (guess-readable? (.-line rl)))]
@@ -434,6 +453,16 @@ interpreted by the REPL client. The following specials are available:
                               (-> .-line (set! (str pre (subs post (count del)))))
                               ._refreshLine))
                           (._moveCursor 1)))
+        "\u007F" (when-some [[open p] (re-find #"#?([({\[])$" pre)]
+                   (when-some [i (find-closing-delimiter post 0)]
+                     (case [p (nth post i)]
+                       (["(" ")"] ["[" "]"] ["{" "}"])
+                       (doto rl
+                         (-> .-line (set! (str (subs pre 0 (- (count pre) (count open)))
+                                            (subs post 0 i) (subs post (inc i)))))
+                         ._refreshLine
+                         (._moveCursor (- (count open))))
+                       nil)))
         nil)
       
       :string
