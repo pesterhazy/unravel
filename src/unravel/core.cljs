@@ -52,7 +52,7 @@
       (#{"--flag"} arg)
       (do
         (assert (some? nxt) "Needs parameter")
-        (recur (update m :flags (fn [elements] (conj (or elements #{}) nxt))) (rest (rest args))))
+        (recur (update m :flags (fn [elements] (conj (or elements #{}) (keyword nxt)))) (rest (rest args))))
 
       (.startsWith arg "-")
       (throw (js/Error. (str "Unknown argument: " arg)))
