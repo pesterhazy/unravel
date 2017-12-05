@@ -1,5 +1,6 @@
 (ns unravel.core
   (:require [clojure.spec.alpha :as spec]
+            [cljs.reader]
             [unravel.log :as ul]
             [unravel.version :as uv]
             [unravel.loop :as uo])
@@ -61,18 +62,31 @@
 (def help-text
   "Syntax: unravel [--debug] [-c|--classpath <paths>] [--blob blob1 [--blob blob2 ...]] [--flag flag1 [--flag --flag2 ...]] [<host>] <port>\n        unravel --version")
 
+(defn jack-in [cb]
+  (let [pr (.spawn (js/require "child_process")
+                   "bash" #js ["scripts/jack-in"])
+        sb (StringBuffer.)]
+    (-> pr .-stdout (.on "data" (fn [data]
+                                  (.append sb (.toString data))
+                                  (if-let [match (re-find #"\[:jack-in/ready.*" (.toString sb))]
+                                    (let [[tag {:keys [port]}] (cljs.reader/read-string match)]
+                                      (when (not= tag :jack-in/ready)
+                                        (throw (js/Error. "Could not parse :jack-in/ready message")))
+                                      (cb port))))))))
+
 (defn -main [& more]
   (init)
-  (let [{:keys [version? debug? positional] :as args} (parse-args more)
-        [host port] positional]
+  (let [{:keys [version? debug? positional] :as args} (parse-args more)]
     (when version? (print-version!))
     (when debug? (reset! ul/debug? true))
     (let [jack-in? (case (count positional)
                      2 false
                      0 true
-                     (throw (js/Error. "You need to pass 0 or 2 positional arguments")))]
+                     (throw (js/Error. "You need to pass 0 or 2 positional arguments")))
+          start-fn (fn [host port]
+                     (uo/start (or host "localhost")
+                               port
+                               args))]
       (if jack-in?
-        (prn :jack-in)
-        (uo/start (or host "localhost")
-                  port
-                  args)))))
+        (jack-in (fn [port] (start-fn "localhost" port)))
+        (start-fn (first positional) (second positional))))))
