@@ -67,8 +67,12 @@
         [host port] positional]
     (when version? (print-version!))
     (when debug? (reset! ul/debug? true))
-    (when-not (= 2 (count positional))
-      (throw (js/Error. "You need to pass exactly 2 arguments")))
-    (uo/start (or host "localhost")
-              port
-              args)))
+    (let [jack-in? (case (count positional)
+                     2 false
+                     0 true
+                     (throw (js/Error. "You need to pass 0 or 2 positional arguments")))]
+      (if jack-in?
+        (prn :jack-in)
+        (uo/start (or host "localhost")
+                  port
+                  args)))))
