@@ -60,7 +60,7 @@
                (rest args))))))
 
 (def help-text
-  "Syntax: unravel [--debug] [-c|--classpath <paths>] [--blob blob1 [--blob blob2 ...]] [--flag flag1 [--flag --flag2 ...]] [<host>] <port>\n        unravel --version")
+  "Syntax: unravel [--debug] [-c|--classpath <paths>] [--blob blob1 [--blob blob2 ...]] [--flag flag1 [--flag --flag2 ...]] [<host> <port>]\n        unravel --version")
 
 (defn jack-in [cb]
   (let [pr (.spawn (js/require "child_process")
