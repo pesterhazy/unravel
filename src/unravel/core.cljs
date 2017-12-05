@@ -1,10 +1,8 @@
 (ns unravel.core
-  (:require [clojure.string :as str]
-            [clojure.spec.alpha :as spec]
+  (:require [clojure.spec.alpha :as spec]
             [unravel.log :as ul]
             [unravel.version :as uv]
-            [unravel.loop :as uo]
-            [unravel.node :as un])
+            [unravel.loop :as uo])
   (:import [goog.string StringBuffer]))
 
 (defn fail [message]
@@ -26,40 +24,39 @@
                               :flags (spec/& (spec/cat :_ #{"--flag"} :path string?) (spec/conformer #(:path %)))))
    :host (spec/? string?) :port (spec/and string? #(re-matches #"\d+" %))))
 
+(defn parse-arg [m [arg nxt :as args]]
+  (let [switch (fn [test-fn kw]
+                 (when (test-fn arg)
+                   [(assoc m :version? true) (rest args)]))
+        mult (fn mult
+               ([test-fn kw] (mult test-fn kw [] identity))
+               ([test-fn kw empty-coll] (mult test-fn kw empty-coll identity))
+               ([test-fn kw empty-coll val-fn]
+                (when (test-fn arg)
+                  (assert (some? nxt) "Needs parameter")
+                  [(update m kw (fn [elements] (conj (or elements empty-coll) (val-fn nxt)))) (rest (rest args))])))]
+    (or
+     (switch #{"--version"} :version?)
+     (switch #{"--debug"} :debug?)
+     (mult #{"--classpath" "-c"} :cp)
+     (mult #{"--blob"} :blobs)
+     (mult #{"--flag"} :flags #{} keyword))))
+
 (defn parse-args [args]
   (loop [m {}
-         [arg nxt :as args] args]
-    (cond
-      (nil? arg)
-      m
+         [arg :as args] args]
+    (if-let [[m* args*] (parse-arg m args)]
+      (recur m* args*)
+      (cond
+        (nil? arg)
+        m
 
-      (= "--version" arg)
-      (recur (assoc m :version? true) (rest args))
+        (.startsWith arg "-")
+        (throw (js/Error. (str "Unknown argument: " arg)))
 
-      (= "--debug" arg)
-      (recur (assoc m :debug? true) (rest args))
-
-      (#{"--classpath" "-c"} arg)
-      (do
-        (assert (some? nxt) "Needs parameter")
-        (recur (update m :cp (fn [elements] (conj (or elements []) nxt))) (rest (rest args))))
-
-      (#{"--blob"} arg)
-      (do
-        (assert (some? nxt) "Needs parameter")
-        (recur (update m :blobs (fn [elements] (conj (or elements []) nxt))) (rest (rest args))))
-
-      (#{"--flag"} arg)
-      (do
-        (assert (some? nxt) "Needs parameter")
-        (recur (update m :flags (fn [elements] (conj (or elements #{}) (keyword nxt)))) (rest (rest args))))
-
-      (.startsWith arg "-")
-      (throw (js/Error. (str "Unknown argument: " arg)))
-
-      :else
-      (recur (update m :positional (fn [xs] (conj (or xs []) arg)))
-             (rest args)))))
+        :else
+        (recur (update m :positional (fn [xs] (conj (or xs []) arg)))
+               (rest args))))))
 
 (def help-text
   "Syntax: unravel [--debug] [-c|--classpath <paths>] [--blob blob1 [--blob blob2 ...]] [--flag flag1 [--flag --flag2 ...]] [<host>] <port>\n        unravel --version")
@@ -71,7 +68,7 @@
     (when version? (print-version!))
     (when debug? (reset! ul/debug? true))
     (when-not (= 2 (count positional))
-      (throw (js/Errorr. "You need to pass exactly 2 arguments")))
+      (throw (js/Error. "You need to pass exactly 2 arguments")))
     (uo/start (or host "localhost")
               port
               args)))
