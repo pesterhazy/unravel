@@ -2,10 +2,18 @@
 
 set -euo pipefail
 
+make_command() {
+    cmd="(do (require 'clojure.core.server) (let [srv (clojure.core.server/start-server {:name :repl :port 0 :accept 'clojure.core.server/repl :server-daemon false})] (println (str \\newline (pr-str [:jack-in/ready {:method :${1}, :port (.getLocalPort srv)}])))))"
+}
+
+
 if [[ -e build.boot ]]; then
-    exec boot -i "(do (require 'clojure.core.server) (let [srv (clojure.core.server/start-server {:name :repl :port 0 :accept 'clojure.core.server/repl :server-daemon false})] (println (pr-str [:jack-in/ready {:method :boot, :port (.getLocalPort srv)}]))))" wait
+    make_command boot
+    exec boot -i "$cmd" wait
 elif [[ -e project.clj ]]; then
-    exec lein trampoline run -m clojure.main -e "(do (require 'clojure.core.server) (let [srv (clojure.core.server/start-server {:name :repl :port 0 :accept 'clojure.core.server/repl :server-daemon false})] (println (pr-str [:jack-in/ready {:method :lein, :port (.getLocalPort srv)}]))))"
+    make_command lein
+    exec lein trampoline run -m clojure.main -e "$cmd"
 else
-    exec clj -e "(do (require 'clojure.core.server) (let [srv (clojure.core.server/start-server {:name :repl :port 0 :accept 'clojure.core.server/repl :server-daemon false})] (println (pr-str [:jack-in/ready {:method :clj, :port (.getLocalPort srv)}]))))"
+    make_command clj
+    exec clj -e "$cmd"
 fi
