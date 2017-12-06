@@ -1,6 +1,5 @@
 (ns unravel.loop
   (:require [clojure.string :as str]
-            [clojure.pprint :refer [pprint]]
             [clojure.walk]
             [lumo.core]
             [lumo.io :refer [slurp]]
@@ -13,7 +12,9 @@
             [unravel.log :as ud]
             [unravel.util :as uu]
             [unravel.lisp :as ul]
-            [unravel.exception :as ue]))
+            [unravel.exception :as ue]
+            [net.cgrand.packed-printer :as pp]
+            [unravel.pprint]))
 
 (defn squawk [rl & xs]
   (println)
@@ -54,10 +55,15 @@
   (some-> ctx :aux-out .end)
   (some-> ctx :loader-out .destroy)) ; plain .end hangs
 
+(defn- print-result [ctx result]
+  (if (some-> ctx :options :flags :packed)
+    (pp/pprint result :as :unrepl/edn :strict 20 :width (quot (.-columns js/process.stdout) 1.11))
+    (ut/cyan #(prn result))))
+
 (defmethod process [:conn :eval] [[_ result counter] _ ctx]
   (if (and (some? (:trigger ctx)) (= (:trigger ctx) result))
     (terminate! ctx)
-    (ut/cyan #(prn result)))
+    (print-result ctx result))
   (assoc ctx :pending-eval nil))
 
 (defmethod process [:conn :started-eval] [[_ {:keys [actions]}] _ ctx]
@@ -126,18 +132,18 @@
   (println (str "Unravel " uv/version " connected to " host ":" port "\n"))
   (println "Type ^O for full docs of symbol under cursor, ^D to quit,")
   (println "^up and ^down to navigate history, ^C to interrupt current evaluation.")
-  (println "Enter #__help for help")
+  (println "Enter /help for help")
   (println))
 
 (defn help []
   (println)
   (println "Type ^O for full docs of symbol under cursor, ^D to quit.")
-  (println "Lines starting with `#__` are treated as special commands and
+  (println "Lines starting with `/` are treated as special commands and
 interpreted by the REPL client. The following specials are available:
 
-- `#__help` shows a help screen
-- `#__1`, `#__2`, `#__3` ...: expand the numberd lazy seq ellipsis
-- `#__`: expand the most recent lazy seq ellipsis ")
+- `/help` shows a help screen
+- `/1`, `/2`, `/3` ...: expand the numbered ellipsis
+- `//`: expand the most recent lazy seq ellipsis ")
   (println))
 
 (defn read-payload []
@@ -150,9 +156,11 @@ interpreted by the REPL client. The following specials are available:
       (help)
       (.prompt rl))
     
-    (or (nil? cmd) (re-matches #"^\d*$" cmd))
-    (if-let [cmd (get @ug/ellipsis-store (or (some-> cmd js/parseInt) @ug/ellipsis-counter))]
-      (send-command ctx (str cmd))
+    (re-matches #"\d+|/" cmd)
+    (if-some [{:keys [unravel/source] :as m} (get @ug/ellipsis-store (if (= cmd "/") @ug/ellipsis-counter  (js/parseInt cmd)))]
+      (case source
+        :unrepl (send-command ctx (pr-str (:get m)))
+        :unravel (print-result ctx (:value m)))
       (.prompt rl))))
 
 (defn socket-connector
@@ -537,7 +545,7 @@ interpreted by the REPL client. The following specials are available:
   [[_ line] _ ctx]
   (when (ut/rich?)
     (doto (:ostream ctx) .clearLine .clearScreenDown))
-  (if-let [[_ cmd] (re-matches #"^\s*#__([a-zA-Z0-9]*)?\s*$" line)]
+  (if-let [[_ cmd] (re-matches #"^\s*/([/a-zA-Z0-9]+)\s*$" line)]
     (special ctx cmd)
     (send-command ctx line))
   ctx)
@@ -601,4 +609,5 @@ interpreted by the REPL client. The following specials are available:
           (fn [ctx origin msg]
             (ud/dbug :receive {:origin origin} msg)
             (process msg origin ctx)))]
+    #_(.on js/process.stdout "resize" #(sm :term-resize [(.-columns js/process.stdout) (.-rows js/process.stdout)]))
     (.on conn-in "data" #(sm :conn %))))
