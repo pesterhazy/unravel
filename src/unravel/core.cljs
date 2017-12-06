@@ -1,7 +1,7 @@
 (ns unravel.core
   (:require [clojure.spec.alpha :as spec]
             [cljs.reader]
-            [unravel.log :as ul]
+            [unravel.log :as ud]
             [unravel.version :as uv]
             [unravel.loop :as uo])
   (:import [goog.string StringBuffer]))
@@ -16,19 +16,10 @@
 
 (defn init [])
 
-(spec/def ::cmdline-args
-  (spec/cat
-   :options (spec/* (spec/alt :version #{"--version"}
-                              :debug #{"--debug"}
-                              :cp (spec/& (spec/cat :_ #{"--classpath" "-c"} :path string?) (spec/conformer #(:path %)))
-                              :blobs (spec/& (spec/cat :_ #{"--blob"} :path string?) (spec/conformer #(:path %)))
-                              :flags (spec/& (spec/cat :_ #{"--flag"} :path string?) (spec/conformer #(:path %)))))
-   :host (spec/? string?) :port (spec/and string? #(re-matches #"\d+" %))))
-
 (defn parse-arg [m [arg nxt :as args]]
   (let [switch (fn [test-fn kw]
                  (when (test-fn arg)
-                   [(assoc m :version? true) (rest args)]))
+                   [(assoc m kw true) (rest args)]))
         mult (fn mult
                ([test-fn kw] (mult test-fn kw [] identity))
                ([test-fn kw empty-coll] (mult test-fn kw empty-coll identity))
@@ -69,7 +60,8 @@
     (-> pr .-stdout (.on "data" (fn [data]
                                   (.append sb (.toString data))
                                   (if-let [match (re-find #"\[:jack-in/ready.*" (.toString sb))]
-                                    (let [[tag {:keys [port]}] (cljs.reader/read-string match)]
+                                    (let [[tag {:keys [port]} :as msg] (cljs.reader/read-string match)]
+                                      (ud/dbug :jack-in/response msg)
                                       (when (not= tag :jack-in/ready)
                                         (throw (js/Error. "Could not parse :jack-in/ready message")))
                                       (cb port))))))))
@@ -78,7 +70,7 @@
   (init)
   (let [{:keys [version? debug? positional] :as args} (parse-args more)]
     (when version? (print-version!))
-    (when debug? (reset! ul/debug? true))
+    (when debug? (reset! ud/debug? true))
     (let [jack-in? (case (count positional)
                      2 false
                      0 true
