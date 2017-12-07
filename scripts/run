@@ -1,3 +1,6 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-node_modules/.bin/lumo -c src -m unravel.core "$@"
+our_project_root="$(dirname "${BASH_SOURCE[0]}")/.."
+
+exec "$our_project_root/node_modules/.bin/lumo" -c "$our_project_root/src" -m unravel.core "$@"
