@@ -2,6 +2,7 @@
   (:require [clojure.spec.alpha :as spec]
             [cljs.reader]
             [unravel.log :as ud]
+            [unravel.node :as un]
             [unravel.version :as uv]
             [unravel.loop :as uo])
   (:import [goog.string StringBuffer]))
@@ -55,16 +56,31 @@
 
 (defn jack-in [cb]
   (let [pr (.spawn (js/require "child_process")
-                   "bash" #js ["scripts/jack-in"])
+                   "bash" #js [(un/locate "scripts/jack-in")])
+        waiting? (atom true)
         sb (StringBuffer.)]
+    (-> pr
+        (.on "close" (fn [code]
+                       (if-not (zero? code)
+                         (do
+                           (println "Child process failed")
+                           (js/process.exit 1))
+                         (do
+                           (println "Child process ended")
+                           (js/process.exit 0))))))
+    (-> pr .-stderr (.on "data" (fn [data]
+                                  (.write js/process.stderr data))))
     (-> pr .-stdout (.on "data" (fn [data]
-                                  (.append sb (.toString data))
-                                  (if-let [match (re-find #"\[:jack-in/ready.*" (.toString sb))]
-                                    (let [[tag {:keys [port]} :as msg] (cljs.reader/read-string match)]
-                                      (ud/dbug :jack-in/response msg)
-                                      (when (not= tag :jack-in/ready)
-                                        (throw (js/Error. "Could not parse :jack-in/ready message")))
-                                      (cb port))))))))
+                                  (ud/dbug :from-subprocess (.toString data))
+                                  (when @waiting?
+                                    (.append sb (.toString data))
+                                    (if-let [match (re-find #"\[:jack-in/ready.*" (.toString sb))]
+                                      (let [[tag {:keys [port]} :as msg] (cljs.reader/read-string match)]
+                                        (reset! waiting? false)
+                                        (ud/dbug :jack-in/response msg)
+                                        (when (not= tag :jack-in/ready)
+                                          (throw (js/Error. "Could not parse :jack-in/ready message")))
+                                        (cb port)))))))))
 
 (defn -main [& more]
   (init)
