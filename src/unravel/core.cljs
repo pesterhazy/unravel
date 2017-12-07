@@ -55,32 +55,32 @@
   "Syntax: unravel [--debug] [-c|--classpath <paths>] [--blob blob1 [--blob blob2 ...]] [--flag flag1 [--flag --flag2 ...]] [<host> <port>]\n        unravel --version")
 
 (defn jack-in [cb]
-  (let [pr (.spawn (js/require "child_process")
-                   "bash" #js [(un/locate "scripts/jack-in")])
+  (let [child (.spawn (js/require "child_process")
+                      "bash"
+                      #js [(un/locate "scripts/jack-in")])
         waiting? (atom true)
+        terminate-fn (fn terminate-fn []
+                       (.kill child))
         sb (StringBuffer.)]
-    (-> pr
-        (.on "close" (fn [code]
-                       (if-not (zero? code)
-                         (do
-                           (println "Child process failed")
-                           (js/process.exit 1))
-                         (do
-                           (println "Child process ended")
-                           (js/process.exit 0))))))
-    (-> pr .-stderr (.on "data" (fn [data]
-                                  (.write js/process.stderr data))))
-    (-> pr .-stdout (.on "data" (fn [data]
-                                  (ud/dbug :from-subprocess (.toString data))
-                                  (when @waiting?
-                                    (.append sb (.toString data))
-                                    (if-let [match (re-find #"\[:jack-in/ready.*" (.toString sb))]
-                                      (let [[tag {:keys [port]} :as msg] (cljs.reader/read-string match)]
-                                        (reset! waiting? false)
-                                        (ud/dbug :jack-in/response msg)
-                                        (when (not= tag :jack-in/ready)
-                                          (throw (js/Error. "Could not parse :jack-in/ready message")))
-                                        (cb port)))))))))
+    (-> child
+        (.on "exit" (fn []
+                      (-> child .-stdout .destroy)
+                      (-> child .-stderr .destroy)))
+        (.on "close" (fn [code signal]
+                       (ud/dbug :jack-in/closed {:code code :signal signal}))))
+    (-> child .-stderr (.on "data" (fn [data]
+                                     (.write js/process.stderr data))))
+    (-> child .-stdout (.on "data" (fn [data]
+                                     (ud/dbug :from-subprocess (.toString data))
+                                     (when @waiting?
+                                       (.append sb (.toString data))
+                                       (if-let [match (re-find #"\[:jack-in/ready.*" (.toString sb))]
+                                         (let [[tag {:keys [port]} :as msg] (cljs.reader/read-string match)]
+                                           (reset! waiting? false)
+                                           (ud/dbug :jack-in/response msg)
+                                           (when (not= tag :jack-in/ready)
+                                             (throw (js/Error. "Could not parse :jack-in/ready message")))
+                                           (cb port terminate-fn)))))))))
 
 (defn -main [& more]
   (init)
@@ -91,10 +91,11 @@
                      2 false
                      0 true
                      (throw (js/Error. "You need to pass 0 or 2 positional arguments")))
-          start-fn (fn [host port]
+          start-fn (fn [host port terminate-fn]
                      (uo/start (or host "localhost")
                                port
+                               terminate-fn
                                args))]
       (if jack-in?
-        (jack-in (fn [port] (start-fn "localhost" port)))
-        (start-fn (first positional) (second positional))))))
+        (jack-in (fn [port terminate-fn] (start-fn "localhost" port terminate-fn)))
+        (start-fn (first positional) (second positional) (fn []))))))
