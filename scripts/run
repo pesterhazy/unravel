@@ -4,5 +4,6 @@ set -euo pipefail
 our_project_root="$(dirname "${BASH_SOURCE[0]}")/.."
 
 export UNRAVEL_HOME="$our_project_root"
+export NODE_PATH="${UNRAVEL_HOME}/node_modules"
 
 exec "$our_project_root/node_modules/.bin/lumo" -c "$our_project_root/src" -m unravel.core "$@"

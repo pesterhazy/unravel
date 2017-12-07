@@ -19,7 +19,7 @@ fi
 case "$method" in
     boot)
         make_command boot
-        exec boot -i "$cmd" wait
+        exec boot call -e "$cmd" wait
         ;;
     lein)
         make_command lein
