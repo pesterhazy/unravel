@@ -23,9 +23,9 @@
       [(reader/read r)
        (uu/unblank (clojure.string/trim (read-chars r)))])))
 
-(def lead-word-regex #"^[*+=?!_?a-zA-Z-][*+=?!_'?a-zA-Z0-9/.-]*")
-(def word-prefix-regex #"[*+=?!_?a-zA-Z-][*+=?!_'?a-zA-Z0-9/.-]*$")
-(def word-suffix-regex #"^[*+=?!_'?a-zA-Z0-9/.-]*")
+(def lead-word-regex #"^[<>*+=?!_?a-zA-Z-][<>*+=?!_'?a-zA-Z0-9/.-]*")
+(def word-prefix-regex #"[<>*+=?!_?a-zA-Z-][<>*+=?!_'?a-zA-Z0-9/.-]*$")
+(def word-suffix-regex #"^[<>*+=?!_'?a-zA-Z0-9/.-]*")
 
 (defn find-word-at [s pos]
   (if-some [pre (re-find word-prefix-regex (subs s 0 pos))]
