@@ -4,7 +4,8 @@
             [unravel.log :as ud]
             [unravel.node :as un]
             [unravel.version :as uv]
-            [unravel.loop :as uo])
+            [unravel.loop :as uo]
+            [unravel.jack-in])
   (:import [goog.string StringBuffer]))
 
 (defn fail [message]
@@ -57,7 +58,7 @@
 (defn jack-in [cb]
   (let [child (.spawn (js/require "child_process")
                       "bash"
-                      #js [(un/locate "scripts/jack-in")])
+                      #js ["-c" unravel.jack-in/payload])
         waiting? (atom true)
         terminate-fn (fn terminate-fn []
                        (.kill child))
