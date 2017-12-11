@@ -561,17 +561,14 @@ interpreted by the REPL client. The following specials are available:
         (show-doc ctx true)
 
         (= (.-name key) "enter")
-        (do
-          (ud/dbug :enter)
-          (let [rl (:rl ctx)]
-            (._insertString rl "\n")))
+        (let [rl (:rl ctx)]
+          (._insertString rl "\n"))
 
         (= (.-name key) "return")
-        (do
-          (ud/dbug :return)
-          (let [rl (:rl ctx)]
-            (if (or (not (str/includes? (.-line rl) "\n")) (guess-readable? (.-line rl)))
-              ((:send-input! ctx)))))
+        (let [rl (:rl ctx)]
+          (if (and (guess-readable? (.-line rl)))
+            ((:send-input! ctx))
+            (._insertString rl "\n")))
 
         :else
         (do
