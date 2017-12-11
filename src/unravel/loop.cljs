@@ -41,11 +41,12 @@
 (defmulti process (fn [command origin ctx] [origin (first command)]))
 
 (defmethod process [:conn :prompt] [[_ opts] _ {:keys [rl state] :as ctx}]
-  (let [ns (:form (get opts 'clojure.core/*ns*))]
-    (when ns
-      (swap! state assoc :ns ns)
-      (set-prompt ctx ns false))
-    (some-> rl (.prompt true)))
+  (when (ut/interactive?)
+    (let [ns (:form (get opts 'clojure.core/*ns*))]
+      (when ns
+        (swap! state assoc :ns ns)
+        (set-prompt ctx ns false))
+      (some-> rl (.prompt true))))
   ctx)
 
 (defn- terminate! [ctx]
@@ -552,31 +553,33 @@ interpreted by the REPL client. The following specials are available:
 
 (defmethod process [:readline :keypress]
   [[_ [chunk key]] _ ctx]
-  (let [now (current-time-micros)
-        is-pasting (< (- now (:last-keypress ctx)) 10000)]
-    (cond
-      (and (.-ctrl key) (= "o" (.-name key)))
-      (show-doc ctx true)
-      
-      (= (.-name key) "enter")
-      (do
-        (ud/dbug :enter)
-        (let [rl (:rl ctx)]
-          (._insertString rl "\n")))
+  (if (ut/interactive?)
+    (let [now (current-time-micros)
+          is-pasting (< (- now (:last-keypress ctx)) 10000)]
+      (cond
+        (and (.-ctrl key) (= "o" (.-name key)))
+        (show-doc ctx true)
 
-      (= (.-name key) "return")
-      (do
-        (ud/dbug :return)
-        (let [rl (:rl ctx)]
-          (if (or (not (str/includes? (.-line rl) "\n")) (guess-readable? (.-line rl)))
-            ((:send-input! ctx)))))
-      
-      :else
-      (do
-        (check-readable ctx)
-        (when-not is-pasting
-          (show-doc ctx false))))
-    (assoc ctx :last-keypress now)))
+        (= (.-name key) "enter")
+        (do
+          (ud/dbug :enter)
+          (let [rl (:rl ctx)]
+            (._insertString rl "\n")))
+
+        (= (.-name key) "return")
+        (do
+          (ud/dbug :return)
+          (let [rl (:rl ctx)]
+            (if (or (not (str/includes? (.-line rl) "\n")) (guess-readable? (.-line rl)))
+              ((:send-input! ctx)))))
+
+        :else
+        (do
+          (check-readable ctx)
+          (when-not is-pasting
+            (show-doc ctx false))))
+      (assoc ctx :last-keypress now))
+    ctx))
 
 (defmethod process [:readline :close]
   [_ _ ctx]
