@@ -540,7 +540,7 @@ interpreted by the REPL client. The following specials are available:
 
 (defmethod process [:readline :line]
   [[_ line] _ ctx]
-  (when (ut/rich?)
+  (when (and (ut/interactive?) (ut/rich?))
     (doto (:ostream ctx) .clearLine .clearScreenDown))
   (if-let [[_ cmd] (re-matches #"^\s*#__([a-zA-Z0-9]*)?\s*$" line)]
     (special ctx cmd)
