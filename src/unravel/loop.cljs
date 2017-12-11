@@ -558,9 +558,19 @@ interpreted by the REPL client. The following specials are available:
       (and (.-ctrl key) (= "o" (.-name key)))
       (show-doc ctx true)
       
-      (and (.-ctrl key) (= "j" (.-name key))) ; j like jog (run)
-      ((:send-input! ctx))
-    
+      (= (.-name key) "enter")
+      (do
+        (ud/dbug :enter)
+        (let [rl (:rl ctx)]
+          (._insertString rl "\n")))
+
+      (= (.-name key) "return")
+      (do
+        (ud/dbug :return)
+        (let [rl (:rl ctx)]
+          (if (or (not (str/includes? (.-line rl) "\n")) (guess-readable? (.-line rl)))
+            ((:send-input! ctx))
+      
       :else
       (do
         (check-readable ctx)
