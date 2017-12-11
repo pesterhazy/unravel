@@ -501,19 +501,17 @@ interpreted by the REPL client. The following specials are available:
     (specify! rl
       Object
       (_line [this]
-        (if (and (re-matches #"\s*" (subs (.-line this) (.-cursor this))) (guess-readable? (.-line this)))
-          (send-input!)
-          (._insertString this "\n")))
+        (ud/dbug :_line (.-line this)))
       (_ttyWrite [this s key]
         (or (and parfix-enabled
-              (parfix rl (subs (.-line rl) 0 (.-cursor rl)) (subs (.-line rl) (.-cursor rl)) s))
-          (if
-            (not (or (.-ctrl key) (.-meta key) (.-shift key)))
-            (case (.-name key)
-              "up" (line-up this)
-              "down" (line-down this) 
-              (.call super-_ttyWrite this s key))
-            (.call super-_ttyWrite this s key))))
+                 (parfix rl (subs (.-line rl) 0 (.-cursor rl)) (subs (.-line rl) (.-cursor rl)) s))
+            (if
+                (not (or (.-ctrl key) (.-meta key) (.-shift key)))
+              (case (.-name key)
+                "up" (line-up this)
+                "down" (line-down this) 
+                (.call super-_ttyWrite this s key))
+              (.call super-_ttyWrite this s key))))
       (_addHistory [this]
         (let [line (.-line this)]
           (set! (.-line this) (str/join "\uE7C7" (str/split line #"\r\n|\r|\n")))
@@ -560,9 +558,20 @@ interpreted by the REPL client. The following specials are available:
       (and (.-ctrl key) (= "o" (.-name key)))
       (show-doc ctx true)
       
-      (and (.-ctrl key) (= "j" (.-name key))) ; j like jog (run)
-      ((:send-input! ctx))
-    
+      (= (.-name key) "enter")
+      (do
+        (ud/dbug :enter)
+        (let [rl (:rl ctx)]
+          (._insertString rl "\n")))
+
+      (= (.-name key) "return")
+      (do
+        (ud/dbug :return)
+        (let [rl (:rl ctx)]
+          (if (or (not (str/includes? (.-line rl) "\n")) (guess-readable? (.-line rl)))
+            ((:send-input! ctx))
+            (._insertString rl "\n"))))
+
       :else
       (do
         (check-readable ctx)
