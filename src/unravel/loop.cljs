@@ -569,7 +569,7 @@ interpreted by the REPL client. The following specials are available:
         (ud/dbug :return)
         (let [rl (:rl ctx)]
           (if (or (not (str/includes? (.-line rl) "\n")) (guess-readable? (.-line rl)))
-            ((:send-input! ctx))
+            ((:send-input! ctx)))))
       
       :else
       (do
