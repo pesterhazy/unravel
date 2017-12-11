@@ -501,9 +501,7 @@ interpreted by the REPL client. The following specials are available:
     (specify! rl
       Object
       (_line [this]
-        (if (and (re-matches #"\s*" (subs (.-line this) (.-cursor this))) (guess-readable? (.-line this)))
-          (send-input!)
-          (._insertString this "\n")))
+        (ud/dbug :_line (.-line this)))
       (_ttyWrite [this s key]
         (or (and parfix-enabled
               (parfix rl (subs (.-line rl) 0 (.-cursor rl)) (subs (.-line rl) (.-cursor rl)) s))
